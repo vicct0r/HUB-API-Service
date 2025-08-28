@@ -54,13 +54,15 @@ class CdRequestTradeAPIView(APIView):
         product = kwargs.get('product')
         quantity = int(kwargs.get('quantity'))
 
-        if not product or not quantity:
+        if product is None or quantity is None:
             return Response({
                 "status": "error",
                 "message": "Please provide the product and quantity required."
             }, status=status.HTTP_400_BAD_REQUEST)
         
         cds = DistributionCenter.objects.filter(is_active=True)
+        selected_cd = None
+        distribution_centers = []
         x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR") # verificando se o IP vem de um Load Balancer/Proxy
 
         if x_forwarded_for:
@@ -69,8 +71,6 @@ class CdRequestTradeAPIView(APIView):
             ip = request.META.get("REMOTE_ADDR")
             port = request.META.get("REMOTE_PORT")
         
-        selected_cd = None
-        distribution_centers = []
         url = f"http://{ip}:{port}/cd/v1/"
 
         for cd in cds:
@@ -102,10 +102,54 @@ class CdRequestTradeAPIView(APIView):
             return Response({
                 "status": "error",
                 "message": f"No CD has the product {product}!"
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_404_NOT_FOUND)
 
-        target_cd = DistributionCenter.objects.filter(name=selected_cd["cd"])
+        supplier_cd = get_object_or_404(DistributionCenter, name=selected_cd["cd"])
+        buyer_cd = get_object_or_404(DistributionCenter, ip=ip)
+        target_url = f"http://{supplier_cd.ip}/cd/v1/"
+        try:
+            t_response = requests.get(url=f"{target_url}info/", timeout=5)
+            r_response = requests.get(url=f"{url}/info/", timeout=5)
+            r_response.raise_for_status()
+            t_response.raise_for_status()
+        except Exception as e:
+            return Response({
+                "status": "error",
+                "message": "Failed to communicate with external service!",
+                "error": str(e)
+            }, status=status.HTTP_424_FAILED_DEPENDENCY)
         
+        if t_response.status_code == 200 and r_response.status_code == 200:
+            buying_product = f"{url}product/buy/{product}/{quantity}/"
+            selling_product = f"{target_url}product/sell/{product}/{quantity}/"
+            buy_transaction = None
+            sell_transaction = None
+
+            try:
+                buy_transaction = requests.post(url=buying_product, timeout=5)
+                sell_transaction = requests.post(url=selling_product, timeout=5)
+                buy_transaction.raise_for_status()
+                sell_transaction.raise_for_status()
+            except Exception as e:
+                return Response({
+                    "status": "error",
+                    "message": "Error during transaction between the Distribution Centers!",
+                    "buyer_status_code": buy_transaction.status_code,
+                    "supplier_status_code": sell_transaction.status_code,
+                    "action": "failed"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
+            bought_product_price = selected_cd['price']
+            
+            return Response({
+                "status": "success",
+                "buyer": buyer_cd.name,
+                "supplier": supplier_cd.name,
+                "product": product,
+                "quantity": quantity,
+                "unit_price": bought_product_price,
+                "total": bought_product_price * quantity,
+                "action": "transaction"
+            }, status=status.HTTP_200_OK)
             
             
