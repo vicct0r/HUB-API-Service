@@ -64,76 +64,48 @@ class CdRequestTradeAPIView(APIView):
         x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR") # verificando se o IP vem de um Load Balancer/Proxy
 
         if x_forwarded_for:
-            ip = x_forwarded_for.split(",")[0]  # pega o primeiro IP da cadeia
+            ip = x_forwarded_for.split(",")[0]  # primeiro IP da cadeia
         else:
             ip = request.META.get("REMOTE_ADDR")
+            port = request.META.get("REMOTE_PORT")
         
-        formated_cd_url = f"http://{ip}/cd/v1/"
         selected_cd = None
         distribution_centers = []
+        url = f"http://{ip}:{port}/cd/v1/"
 
         for cd in cds:
-            if cd.url == formated_cd_url:
+            if cd.ip == ip:
                 continue
 
             try:
-                response = requests.get(url=f"{cd.url}product/request/{product}/{quantity}/", timeout=5)
+                response = requests.get(url=f"{url}product/request/{product}/{quantity}/", timeout=5)
                 response.raise_for_status()
-            except Exception as e:
-                continue
-
+            except requests.exceptions.RequestException as e:
+                return Response({
+                    "status": "error",
+                    "message": "Failed to communicate with external service!",
+                    "error": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+    
             distribution_centers.append(cd.name)
             
-            if response.json()['available']:
-                if selected_cd:
-                    if response.json()['price'] < selected_cd['price']:
-                        selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd}
-                else:
-                    selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd}
+            if not response.json()['available']:
+                continue
+
+            if selected_cd:
+                if response.json()['price'] < selected_cd['price']:
+                    selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd.name}
+            else:
+                    selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd.name}
 
         if not selected_cd:
             return Response({
                 "status": "error",
-                "message": "Product not found on the CDs! Contact the HUB!"
-            }, status=status.HTTP_404_NOT_FOUND)
+                "message": f"No CD has the product {product}!"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        target_cd = DistributionCenter.objects.filter(name=selected_cd["cd"])
         
-        target_transaction_cd = get_object_or_404(DistributionCenter, name=selected_cd["name"])
-        requested_transaction_cd = get_object_or_404(DistributionCenter, url=formated_cd_url)
-        
-        if not cd_running(target_transaction_cd) and not cd_running(requested_transaction_cd):
-            return Response({
-                "status": "error",
-                "message": "Transaction aborted due to connection error.",
-                "seller_cd_conn": cd_running(target_transaction_cd),
-                "client_cd_conn": cd_running(requested_transaction_cd),
-                "targets": distribution_centers
-            }, status=status.HTTP_424_FAILED_DEPENDENCY)
-        
-        if buy_endpoint(cd_url=requested_transaction_cd, product=product, quantity=quantity) and sell_endpoint(cd_url=target_transaction_cd, product=product, quantity=quantity):
-            with transaction.atomic():
-                target_transaction_cd.balance += selected_cd["price"]
-                requested_transaction_cd.balance -= selected_cd["price"]
-                target_transaction_cd.save()
-                requested_transaction_cd.save()
-            
-            return Response({
-            "status": "success",
-            "message": f"The CD {requested_transaction_cd.name} bought {quantity} {product}'s from the {target_transaction_cd.name}!",
-            "action": "trade"
-            }, status=status.HTTP_200_OK)
-        else:
-            return Response({
-                "status": "error",
-                "error_code": "INTERNAL_SERVER_ERROR",
-                "message": "The transaction failed due to server error with the Distribution Center!"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-    
-
-
-
-
-
             
             
             

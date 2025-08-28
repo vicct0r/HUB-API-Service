@@ -13,11 +13,12 @@ class Base(models.Model):
 
 class DistributionCenter(Base):
     name = models.CharField('Name', max_length=100, unique=True)
-    url = models.URLField(unique=True)
+    url = models.URLField('Website URL', unique=True, blank=True, null=True)
+    ip = models.CharField('IP', max_length=200, unique=True)
     region = models.CharField('Region', max_length=100, blank=True, null=True)
-    description = models.TextField(null=True, blank=True)
-    status = models.BooleanField(default=False, editable=False)
-    balance = models.DecimalField(default=0, max_digits=12, decimal_places=2, editable=False)
+    description = models.TextField('Description', null=True, blank=True)
+    status = models.BooleanField('Status', default=False, editable=False)
+    balance = models.DecimalField('Balance', default=0, max_digits=12, decimal_places=2, editable=False)
     slug = models.SlugField(null=True)
 
     def __str__(self):
