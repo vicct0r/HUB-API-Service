@@ -88,16 +88,16 @@ class CdRequestTradeAPIView(APIView):
                 }, status=status.HTTP_400_BAD_REQUEST)
     
             distribution_centers.append(cd.name)
-            
-            if not response.json()['available']:
+            data = response.json()
+
+            if not data['available']:
                 continue
 
-            if selected_cd:
-                if response.json()['price'] < selected_cd['price']:
-                    selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd.name}
-            else:
-                    selected_cd = {"price": response.json()['price'], "available": response.json()['available'], "cd": cd.name}
-
+            if not selected_cd:
+                selected_cd = {"price": data['price'], "available": data['available'], "cd": cd.name}
+            elif data["price"] < selected_cd["price"]:
+                selected_cd = {"price": data['price'], "available": data['available'], "cd": cd.name}
+        
         if not selected_cd:
             return Response({
                 "status": "error",
@@ -115,7 +115,7 @@ class CdRequestTradeAPIView(APIView):
         except Exception as e:
             return Response({
                 "status": "error",
-                "message": "Failed to communicate with external service!",
+                "message": "CD failed to answer the HUB request!",
                 "error": str(e)
             }, status=status.HTTP_424_FAILED_DEPENDENCY)
         
@@ -134,8 +134,8 @@ class CdRequestTradeAPIView(APIView):
                 return Response({
                     "status": "error",
                     "message": "Error during transaction between the Distribution Centers!",
-                    "buyer_status_code": buy_transaction.status_code,
-                    "supplier_status_code": sell_transaction.status_code,
+                    "buyer_status_code": buy_transaction.status_code if buy_transaction is not None else None,
+                    "supplier_status_code": sell_transaction.status_code if sell_transaction is not None else None,
                     "action": "failed"
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
@@ -147,8 +147,8 @@ class CdRequestTradeAPIView(APIView):
                 "supplier": supplier_cd.name,
                 "product": product,
                 "quantity": quantity,
-                "unit_price": bought_product_price,
-                "total": bought_product_price * quantity,
+                "unit_price": float(bought_product_price),
+                "total": float(bought_product_price) * int(quantity),
                 "action": "transaction"
             }, status=status.HTTP_200_OK)
             
